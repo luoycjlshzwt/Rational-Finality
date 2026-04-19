@@ -8,17 +8,27 @@ from tqdm import tqdm
 
 plt.rcParams['pdf.fonttype'] = 42
 plt.rcParams['ps.fonttype'] = 42
+plt.rcParams['font.family'] = 'Times New Roman'
 
 sns.set_theme(style="white", context="paper", font_scale=1.6)
 plt.rcParams.update({
+    "font.family": "Times New Roman",
     'axes.labelweight': 'bold',
     'axes.titleweight': 'bold',
     'font.weight': 'bold',
-    'legend.fontsize': 18,
+    'xtick.labelsize': 22,    # X 
+    'ytick.labelsize': 22,    # Y 
+    'legend.fontsize': 21,
     'axes.linewidth': 2.0
 })
-COLORS = {"Honest": "#2ecc71", "Plateau": "#f39c12", "Crash": "#e74c3c", "Line": "#34495e"}
-
+COLORS = {"Honest": "#56B4E9", "Plateau": "#f39c12", "Crash": "#e74c3c", "Line": "#34495e"}
+COLORS1 = {
+    "Main": "#4C78A8",      # muted blue
+    "Accent": "#F2A541",    # muted amber
+    "Dark": "#333333",      
+    "Mid": "#666666",       
+    "Light": "#BBBBBB"      
+}
 
 # ===========================
 # 1. Validator Agent
@@ -147,7 +157,7 @@ def run_heatmap():
 if __name__ == "__main__":
     df_line = run_phase_transition()
 
-    plt.figure(figsize=(12, 7))
+    plt.figure(figsize=(11, 7))
 
     # Shaded Regions
     # Zone 1: Honest (< 1% bribe)
@@ -161,19 +171,19 @@ if __name__ == "__main__":
                  linewidth=4, color=COLORS["Line"], label="Attack Participation")
 
     plt.axhline(0.334, color='gray', linestyle='--', linewidth=1.5, alpha=0.8)
-    plt.text(0.002, 0.35, r"Liveness Threshold $\alpha=33.33\%$", color='gray', fontsize=14)
+    plt.text(0.002, 0.35, r"Liveness Threshold $\alpha=1/3$", color='gray', fontsize=22)
 
     plt.axvline(0.15, color='red', linestyle=':', linewidth=2, alpha=0.6)
-    plt.text(0.14, 0.9, r"Crash Cost Bound $(X_{max}-X_{min})=15\%$", color='red', fontsize=14, rotation=0)
+    plt.text(0.13, 0.8, "Crash Cost Bound\n$X_{max}-X_{min}=15\%$", color='black', fontsize=20, rotation=0)
 
-    plt.text(0.005, 0.6, r"$\sigma^{allH}$", fontsize=16, color='green', ha='center', weight='bold')
-    plt.text(0.08, 0.6, r"$\sigma^{A}$", fontsize=16, color='#d35400', ha='center', weight='bold')
-    plt.text(0.08, 0.2, "Under-threshold\nCoordination", fontsize=13, color='#d35400', ha='center')
-    plt.text(0.175, 0.6, r"$\sigma^{allD}$", fontsize=16, color='darkred', ha='center', weight='bold')
+    plt.text(0.005, 0.6, "$\sigma^{allH}$", fontsize=17, color='#0072B2', ha='center', weight='bold')
+    plt.text(0.08, 0.6, "$\sigma^{A}$", fontsize=17, color='#d35400', ha='center', weight='bold')
+    plt.text(0.08, 0.2, "Under-threshold\nCoordination", fontsize=17, color='#d35400', ha='center')
+    plt.text(0.175, 0.6, "$\sigma^{allD}$", fontsize=17, color='darkred', ha='center', weight='bold')
 
     # plt.title(f"Equilibrium Dynamics", fontsize=18, pad=20)
-    plt.xlabel(r"Bribe ($\beta$)", fontsize=16, fontweight='bold')
-    plt.ylabel(r"Total Deviating Stake ($W$)", fontsize=16, fontweight='bold')
+    plt.xlabel(r"Bribe ($\beta$)", fontsize=20, fontweight='bold')
+    plt.ylabel(r"Total Deviating Stake ($W$)", fontsize=20, fontweight='bold')
     plt.xlim(0, 0.20)
     plt.ylim(0, 1.05)
 
@@ -192,23 +202,43 @@ if __name__ == "__main__":
 
     plt.figure(figsize=(12, 8))
 
-    cp = plt.contourf(X, Y, Z, levels=20, cmap="YlOrRd", alpha=0.8)
+    cp = plt.contourf(X, Y, Z, levels=20, cmap="cividis", alpha=0.8)
 
     cbar = plt.colorbar(cp)
-    cbar.set_label('Attack Participation ($W$)', fontsize=16, fontweight='bold')
-    cbar.ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:.0%}'))
+    cbar.set_label('Attack Participation ($W$)',
+                   fontsize=22,
+                   fontweight='bold')
 
-    CS = plt.contour(X, Y, Z, levels=[0.33], colors='darkblue', linewidths=3, linestyles='--')
-    plt.clabel(CS, inline=True, fmt={0.33: 'Safety Limit (33.33%)'}, fontsize=14)
+    cbar.ax.yaxis.set_major_formatter(
+        plt.FuncFormatter(lambda x, _: f'{x:.0%}')
+    )
 
-    plt.text(0.02, 12, "SECURE ZONE", color='green',
-             fontsize=16, fontweight='bold', bbox=dict(facecolor='white', alpha=0.6))
-    plt.text(0.14, 4, "ATTACK ZONE", color='darkred',
-             fontsize=16, fontweight='bold', bbox=dict(facecolor='white', alpha=0.6))
+    CS = plt.contour(X, Y, Z,
+                     levels=[0.33],
+                     colors=COLORS1["Dark"],
+                     linewidths=2,
+                     linestyles='--')
+
+    plt.clabel(CS,
+               inline=True,
+               fmt={0.33: 'Threshold (1/3)'},
+               fontsize=20)
+
+    plt.text(0.02, 12,
+             "SECURE ZONE",
+             color=COLORS1["Dark"],
+             fontsize=20,
+             bbox=dict(facecolor='white', alpha=0.6, edgecolor='#888888'))
+
+    plt.text(0.14, 4,
+             "ATTACK ZONE",
+             color=COLORS1["Dark"],
+             fontsize=20,
+             bbox=dict(facecolor='white', alpha=0.6, edgecolor='#888888'))
 
     # plt.title("Liveness Stability Phase Space", fontsize=18, pad=20)
-    plt.xlabel(r"Bribe ($\beta$)", fontsize=16, fontweight='bold')
-    plt.ylabel(r"Attack Window Length ($\ell$)", fontsize=16, fontweight='bold')
+    plt.xlabel(r"Bribe ($\beta$)", fontsize=22, fontweight='bold')
+    plt.ylabel(r"Attack Window Length ($\ell$)", fontsize=22, fontweight='bold')
 
     plt.gca().xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:.0%}'))
 
