@@ -30,9 +30,16 @@ Tools for environment setup and lifecycle management.
 
 - `Rational-Finality-Attack/case/attack-liveness.yml`: A Docker Compose template for a heterogeneous network environment, integrating execution-layer clients (Geth) and consensus-layer nodes (Prysm).
 - `Rational-Finality-Attack/runtest.sh`: The primary entry point for single-run experiments. It automates genesis generation, container deployment, and log harvesting.
-- `Rational-Finality-Attack/app_impact_verify.py`: The simulated asset gateway script initiated an on-chain transaction after detecting an attack trigger, set to be confirmed after 16 slots.
+- `Rational-Finality-Attack/app_impact_verify.py`: A Python-based verification tool that simulates a 'mock asset gateway'. It injects a transaction, waits for a predefined confirmation threshold (e.g., k=16), and detects state reversions following a reorganization.
+- `Rational-Finality-Attack/analyze_result.py`: An analytical tool for calculating validator revenue and the impact of the 'Inactivity Leak' mechanism during prolonged stalls.
 - `Rational-Finality-Attack/result/`: Experimental result files, including the experimental logs of each node and the results of the simulated asset gateway script execution.
 - `Rational-Finality-Attack/config/`: Pre-configured genesis states, chain specifications, and security credentials (JWT).
+
+### 2.3 Verification & Simulation (/Rational-Finality-Attack)
+
+Modules for empirical measurement and theoretical validation.
+
+- `Rational-Finality-Attack/liveness_simulation.py`: An Agent-Based Model (ABM) built on the **Mesa** framework to simulate 5,000 heterogeneous agents and observe the three-stage equilibrium transition.
 
 ## 3. Logical Workflow
 
