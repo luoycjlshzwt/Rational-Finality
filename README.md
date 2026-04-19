@@ -1,4 +1,4 @@
-# Rational-Finality-Attack: Systematic Orchestration and Evaluation Framework
+# Rational Finality
 
 This repository provides a comprehensive framework for reproducing and evaluating the **Rational Finality Attack** on Ethereum-like Proof-of-Stake (PoS) systems. This framework is designed to demonstrate an attacker can cause deep chain reorganizations by inducing stall in activity.
 
