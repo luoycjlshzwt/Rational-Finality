@@ -91,6 +91,7 @@ Since on-chain experiments run slowly, the Agent-Based Model based on the **Mesa
 
 ```python
 python3 liveness_simulation.py
+python3 simulation.py
 ```
 
 ### Simulation variables
