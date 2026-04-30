@@ -1,249 +1,176 @@
 import mesa
 import numpy as np
 import pandas as pd
-import seaborn as sns
 import matplotlib.pyplot as plt
-from tqdm import tqdm
-
 
 plt.rcParams['pdf.fonttype'] = 42
 plt.rcParams['ps.fonttype'] = 42
 plt.rcParams['font.family'] = 'Times New Roman'
+plt.rcParams['mathtext.fontset'] = 'stix'
 
-sns.set_theme(style="white", context="paper", font_scale=1.6)
 plt.rcParams.update({
     "font.family": "Times New Roman",
     'axes.labelweight': 'bold',
     'axes.titleweight': 'bold',
     'font.weight': 'bold',
-    'xtick.labelsize': 22,    # X 
-    'ytick.labelsize': 22,    # Y 
-    'legend.fontsize': 21,
+    'xtick.labelsize': 18,
+    'ytick.labelsize': 18,
+    'legend.fontsize': 16,
     'axes.linewidth': 2.0
 })
-COLORS = {"Honest": "#56B4E9", "Plateau": "#f39c12", "Crash": "#e74c3c", "Line": "#34495e"}
-COLORS1 = {
-    "Main": "#4C78A8",      # muted blue
-    "Accent": "#F2A541",    # muted amber
-    "Dark": "#333333",      
-    "Mid": "#666666",       
-    "Light": "#BBBBBB"      
-}
 
-# ===========================
+
+# ==========================================
 # 1. Validator Agent
-# ===========================
-class RationalValidator(mesa.Agent):
-    def __init__(self, unique_id, model, stake, risk_factor):
-        super().__init__(model)  # Mesa 3.0+
-        self.unique_id = unique_id
+# ==========================================
+class ValidatorAgent(mesa.Agent):
+    def __init__(self, model, stake, risk_threshold, is_dc=False):
+        super().__init__(model)
         self.stake = stake
-        self.risk_factor = risk_factor
-        self.strategy = "HONEST"
+        self.is_dc = is_dc
+        self.strategy = "ATTACK" if is_dc else "HONEST"
 
-    def calculate_utility(self, strategy, global_W_without_me):
-        """
-        (Utility Function)
-        """
-        alpha = self.model.alpha
-        X_max = self.model.X_max
-        X_min = self.model.X_min
-        ell = self.model.ell
-
-        beta_amount = self.model.beta * self.stake
-
-        # 1. Counterfactual Prediction
-        my_contribution = self.stake if strategy == "ATTACK" else 0
-        W_predicted = global_W_without_me + my_contribution
-
-        # 2. Threshold Effect
-        current_price = X_min if W_predicted >= alpha else X_max
-
-        wealth = self.stake * current_price
-
-        if strategy == "ATTACK":
-            return wealth + beta_amount
-        else:
-            mining_reward = self.model.reward_rate * ell * self.stake * self.risk_factor * current_price
-            return wealth + mining_reward
+        self.belief = model.delta_dc
+        self.risk_threshold = risk_threshold
 
     def step(self):
-        current_total = self.model.total_deviating_stake
-        w_without_me = current_total - (self.stake if self.strategy == "ATTACK" else 0)
+        if self.is_dc:
+            return
 
-        u_honest = self.calculate_utility("HONEST", w_without_me)
-        u_attack = self.calculate_utility("ATTACK", w_without_me)
+        obs_signal = self.model.public_signal
 
-        new_strategy = "ATTACK" if u_attack > u_honest else "HONEST"
+        self.belief = (1 - self.model.learning_rate) * self.belief + self.model.learning_rate * obs_signal
 
-        if new_strategy != self.strategy:
-            self.strategy = new_strategy
-            if new_strategy == "ATTACK":
-                self.model.total_deviating_stake += self.stake
-            else:
-                self.model.total_deviating_stake -= self.stake
+        reward_loss_max = self.model.r_att * self.model.ell * self.model.X_max
+        reward_loss_min = self.model.r_att * self.model.ell * self.model.X_min
+        capital_loss = self.model.X_max - self.model.X_min
+
+        if self.belief < self.risk_threshold:
+            barrier_penalty = capital_loss * (1 - self.belief / self.risk_threshold)
+            perceived_cost = reward_loss_max + barrier_penalty
+        else:
+            perceived_cost = reward_loss_min
+
+        if self.model.current_bribe > perceived_cost:
+            self.strategy = "ATTACK"
+        else:
+            self.strategy = "HONEST"
 
 
-class LivenessModel(mesa.Model):
-    def __init__(self, N=1000, alpha=0.33, beta=0.01, ell=5, x_min=0.85):
+# ==========================================
+# 2. RFI Model
+# ==========================================
+class RFIModel(mesa.Model):
+    def __init__(self, N, alpha, delta_dc, r_att, ell, x_max, x_min, learning_rate):
         super().__init__()
         self.num_agents = N
         self.alpha = alpha
-        self.beta = beta
+        self.delta_dc = delta_dc
+        self.r_att = r_att
         self.ell = ell
-
-        self.X_max = 1.0
+        self.X_max = x_max
         self.X_min = x_min
-        self.reward_rate = 0.002
+        self.learning_rate = learning_rate
 
-        self.total_deviating_stake = 0.0
-        self.agents_list = []
+        self.public_signal = delta_dc
 
-        stake_per_agent = 1.0 / N
+        self.current_bribe = 0.035
+        self.bribe_increment = 0.005
 
+        self.datacollector = mesa.DataCollector(
+            model_reporters={
+                "Actual_W": lambda m: m.calculate_actual_w(),
+                "Mean_Belief": lambda m: np.mean([a.belief for a in m.agents]),
+                "Current_Bribe": lambda m: m.current_bribe
+            }
+        )
+        risk_vals = np.random.normal(loc=0.20, scale=0.10, size=N)
+        risk_vals = np.clip(risk_vals, 0.01, 0.45)
+
+        num_dc = int(N * delta_dc)
         for i in range(N):
-            r_factor = np.random.uniform(0.4, 1.3)
-            a = RationalValidator(i, self, stake_per_agent, r_factor)
-            self.agents_list.append(a)
+            is_dc = (i < num_dc)
+            a = ValidatorAgent(self, 1.0 / N, risk_vals[i], is_dc=is_dc)
+            self.agents.add(a)
+
+    def calculate_actual_w(self):
+        attacking_count = sum(1 for a in self.agents if a.strategy == "ATTACK")
+        return attacking_count / self.num_agents
 
     def step(self):
-        # Asynchronous Update
-        np.random.shuffle(self.agents_list)
-        for agent in self.agents_list:
-            agent.step()
+        self.agents.shuffle_do("step")
+        actual_w = self.calculate_actual_w()
+        noise = np.random.normal(0, 0.003)
+        self.public_signal = np.clip(actual_w + noise, 0, 1)
+
+        if self.public_signal < self.alpha:
+            self.current_bribe += self.bribe_increment
+        else:
+            self.current_bribe = self.r_att * self.ell * self.X_min * 2.0
+
+        self.datacollector.collect(self)
 
 
-def run_phase_transition():
-    betas = np.linspace(0, 0.20, 150)
+# ==========================================
+# 3
+# ==========================================
 
-    results = []
+model = RFIModel(
+    N=1000000,
+    alpha=0.333,
+    delta_dc=0.01,
+    r_att=0.0005,
+    ell=2.03,
+    x_max=1.0,
+    x_min=0.85,
+    learning_rate=0.7
+)
 
-    print("Simulating Phase Transition...")
-    for b in tqdm(betas):
-        model = LivenessModel(N=1000, alpha=0.33, beta=b, ell=5, x_min=0.85)
+EPOCHS = 16
+for i in range(EPOCHS):
+    model.step()
 
-        for _ in range(20):
-            model.step()
+df = model.datacollector.get_model_vars_dataframe()
 
-        results.append({
-            "Bribe": b,
-            "AttackStake": model.total_deviating_stake
-        })
+# ==========================================
+# vis
+# ==========================================
+fig, ax1 = plt.subplots(figsize=(11, 6), dpi=120)
 
-    return pd.DataFrame(results)
+ax1.axhline(y=0.333, color='#fab1a0', linestyle='--', linewidth=2, label=r'Threshold ($\alpha=1/3$)')
+ax1.fill_between(range(len(df)), 0, 0.333, color='#4C78A8', alpha=0.1)
+ax1.fill_between(range(len(df)), 0.333, 1.05, color='#F2A541', alpha=0.1)
 
+l1 = ax1.plot(df['Actual_W'], color='#d63031', marker='o', markersize=8, linewidth=3,
+              label='Actual Deviating Stake ($W$)')
+l2 = ax1.plot(df['Mean_Belief'], color='#0984e3', linestyle='--', linewidth=3,
+              label='Mean Posterior Belief ($\hat{W}$)')
 
-def run_heatmap():
-    betas = np.linspace(0, 0.20, 50)
-    ells = np.linspace(1, 15, 15)
+ax1.set_xlabel('Epochs', fontsize=18, fontweight='bold')
+ax1.set_ylabel('Fraction of Total Deviating Stake', fontsize=18, fontweight='bold')
+ax1.set_ylim(0, 1.05)
+ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y:.0%}'))
 
-    heatmap_data = []
+ax2 = ax1.twinx()
+l3 = ax2.plot(df['Current_Bribe'], color='#f39c12', marker='s', markersize=6, linestyle='-.', linewidth=2,
+              label='Dynamic Bribe (β)')
+ax2.set_ylabel('Bribe', fontsize=18, fontweight='bold', color='#e67e22')
+ax2.set_ylim(0, 0.15)
+ax2.tick_params(axis='y', labelcolor='#e67e22')
+ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y:.1%}'))
 
-    print("Simulating Heatmap (Phase Space)...")
-    for l in tqdm(ells):
-        for b in betas:
-            model = LivenessModel(N=300, alpha=0.33, beta=b, ell=l, x_min=0.85)
-            for _ in range(15): model.step()
+lines = l1 + l2 + l3 + [ax1.lines[0]]
+labels = [l.get_label() for l in lines]
+ax1.legend(lines, labels, loc='center right', frameon=True, shadow=True, fontsize=14)
 
-            heatmap_data.append({
-                "Ell": l,
-                "Bribe": b,
-                "Disruption": model.total_deviating_stake
-            })
+ax1.annotate('Phase I: Incubation\n(Belief contagion starts)', xy=(1, 0.05), xytext=(1, 0.25),
+             arrowprops=dict(arrowstyle='->', color='gray', lw=1.5), fontsize=15)
+ax1.annotate('Phase II: Cascade\n(Belief breaks barrier)', xy=(3.5, 0.45), xytext=(3, 0.65),
+             arrowprops=dict(arrowstyle='->', color='gray', lw=1.5), fontsize=15)
+ax1.annotate('Phase III: Saturation\n(Bribe withdrawn)', xy=(8, 1.0), xytext=(6, 0.85),
+             arrowprops=dict(arrowstyle='->', color='gray', lw=1.5), fontsize=15)
 
-    return pd.DataFrame(heatmap_data)
-
-
-if __name__ == "__main__":
-    df_line = run_phase_transition()
-
-    plt.figure(figsize=(11, 7))
-
-    # Shaded Regions
-    # Zone 1: Honest (< 1% bribe)
-    plt.axvspan(0, 0.01, color=COLORS["Honest"], alpha=0.1)
-    # Zone 2: Plateau (1% ~ 15% bribe)
-    plt.axvspan(0.01, 0.15, color=COLORS["Plateau"], alpha=0.1)
-    # Zone 3: Crash (> 15% bribe)
-    plt.axvspan(0.15, 0.20, color=COLORS["Crash"], alpha=0.1)
-
-    sns.lineplot(data=df_line, x="Bribe", y="AttackStake",
-                 linewidth=4, color=COLORS["Line"], label="Attack Participation")
-
-    plt.axhline(0.334, color='gray', linestyle='--', linewidth=1.5, alpha=0.8)
-    plt.text(0.002, 0.35, r"Liveness Threshold $\alpha=1/3$", color='gray', fontsize=22)
-
-    plt.axvline(0.15, color='red', linestyle=':', linewidth=2, alpha=0.6)
-    plt.text(0.13, 0.8, "Crash Cost Bound\n$X_{max}-X_{min}=15\%$", color='black', fontsize=20, rotation=0)
-
-    plt.text(0.005, 0.6, "$\sigma^{allH}$", fontsize=17, color='#0072B2', ha='center', weight='bold')
-    plt.text(0.08, 0.6, "$\sigma^{A}$", fontsize=17, color='#d35400', ha='center', weight='bold')
-    plt.text(0.08, 0.2, "Under-threshold\nCoordination", fontsize=17, color='#d35400', ha='center')
-    plt.text(0.175, 0.6, "$\sigma^{allD}$", fontsize=17, color='darkred', ha='center', weight='bold')
-
-    # plt.title(f"Equilibrium Dynamics", fontsize=18, pad=20)
-    plt.xlabel(r"Bribe ($\beta$)", fontsize=20, fontweight='bold')
-    plt.ylabel(r"Total Deviating Stake ($W$)", fontsize=20, fontweight='bold')
-    plt.xlim(0, 0.20)
-    plt.ylim(0, 1.05)
-
-    plt.gca().xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:.0%}'))
-    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y:.0%}'))
-
-    plt.tight_layout()
-    plt.savefig("Q4_1.pdf", format='pdf', bbox_inches='tight')
-    plt.show()
-
-    df_heat = run_heatmap()
-
-    matrix = df_heat.pivot(index="Ell", columns="Bribe", values="Disruption")
-    X, Y = np.meshgrid(matrix.columns, matrix.index)
-    Z = matrix.values
-
-    plt.figure(figsize=(12, 8))
-
-    cp = plt.contourf(X, Y, Z, levels=20, cmap="cividis", alpha=0.8)
-
-    cbar = plt.colorbar(cp)
-    cbar.set_label('Attack Participation ($W$)',
-                   fontsize=22,
-                   fontweight='bold')
-
-    cbar.ax.yaxis.set_major_formatter(
-        plt.FuncFormatter(lambda x, _: f'{x:.0%}')
-    )
-
-    CS = plt.contour(X, Y, Z,
-                     levels=[0.33],
-                     colors=COLORS1["Dark"],
-                     linewidths=2,
-                     linestyles='--')
-
-    plt.clabel(CS,
-               inline=True,
-               fmt={0.33: 'Threshold (1/3)'},
-               fontsize=20)
-
-    plt.text(0.02, 12,
-             "SECURE ZONE",
-             color=COLORS1["Dark"],
-             fontsize=20,
-             bbox=dict(facecolor='white', alpha=0.6, edgecolor='#888888'))
-
-    plt.text(0.14, 4,
-             "ATTACK ZONE",
-             color=COLORS1["Dark"],
-             fontsize=20,
-             bbox=dict(facecolor='white', alpha=0.6, edgecolor='#888888'))
-
-    # plt.title("Liveness Stability Phase Space", fontsize=18, pad=20)
-    plt.xlabel(r"Bribe ($\beta$)", fontsize=22, fontweight='bold')
-    plt.ylabel(r"Attack Window Length ($\ell$)", fontsize=22, fontweight='bold')
-
-    plt.gca().xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:.0%}'))
-
-    plt.grid(True, linestyle=':', alpha=0.4, color='black')
-
-    plt.tight_layout()
-    plt.savefig("Q4_2.pdf", format='pdf', bbox_inches='tight')
-    plt.show()
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.savefig("simulation.pdf", format='pdf', bbox_inches='tight')
+plt.show()
