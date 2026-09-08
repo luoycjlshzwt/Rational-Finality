@@ -43,6 +43,9 @@ testcase() {
   project=$docase
   docker compose -p $project-1 -f $file up -d
   echo "[*] Start the application layer verification script (running in the background)..."
+  sleep 5
+  echo "[*] Start the BES cross-chain verification script..."
+  # $PYTHON -u bes_cross_chain_verifier.py > "${resultdir}/app_impact_result.log" 2>&1 &
   python3 app_impact_verify.py > "${resultdir}/app_impact_result.log" 2>&1 &
   
   echo "wait $caseduration seconds" && sleep $caseduration
