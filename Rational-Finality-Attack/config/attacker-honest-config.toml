@@ -9,4 +9,4 @@ reward_file = "/root/attackerdata/reward.csv"
 strategy = "/root/strategy.json"
 swag_host="127.0.0.1:12100"
 enable_feedback=false
-dbconnect = "ndss:KjGNGFxdJPHH7fzw@tcp(144.34.190.28:3306)/ndss"
+dbconnect = "root:password@tcp(db:3306)/ndss"
