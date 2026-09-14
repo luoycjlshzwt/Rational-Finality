@@ -30,8 +30,17 @@ contract BESBridge {
     uint256 public totalBond; 
     uint256 public reserved;  
     mapping(bytes32 => PendingTransfer) public transfers;
+    bool public active = true;
+    address public owner;
 
-    function depositBond() external payable { totalBond += msg.value; }
+    constructor() { 
+        owner = msg.sender; 
+    }
+
+    function depositBond() external payable { 
+        require(active, "Contract closed");
+        totalBond += msg.value; 
+    }
 
     function earlyExecute(bytes32 txHash, uint256 bn, bytes32 bh, address ai, uint256 vi) external {
         require(totalBond - reserved >= vi, "Bond insufficient");
@@ -51,8 +60,27 @@ contract BESBridge {
         }
         t.resolved = true;
     }
+
+    function withdraw() external {
+        require(msg.sender == owner, "Only owner");
+        require(active, "Already closed");
+        require(reserved == 0, "Pending transfers exist");
+        
+        active = false;
+        uint256 balanceToReturn = totalBond;
+        totalBond = 0;
+        
+        payable(owner).transfer(balanceToReturn);
+    }
 }
 '''
+
+GAS_METRICS = {
+    "1) Initialize": 0,
+    "2) EarlyExecute": 0,
+    "3) Resolve": 0,
+    "4) Withdraw": 0
+}
 
 def print_balance_dashboard(stage_name, w3_src, w3_dst, bes_contract):
     """Prints a formatted dashboard of all relevant balances across both chains."""
@@ -89,7 +117,14 @@ def deploy_contract(w3):
     
     # initialize
     bes_instance = w3.eth.contract(address=tx_receipt.contractAddress, abi=contract_interface['abi'])
-    bes_instance.functions.depositBond().transact({'from': deployer, 'value': w3.to_wei(50, 'ether')})
+    tx_deposit = bes_instance.functions.depositBond().transact({'from': deployer, 'value': w3.to_wei(50, 'ether')})
+    receipt_deposit = w3.eth.wait_for_transaction_receipt(tx_deposit)
+    
+    # 记录 Phase 1 的总 Gas (构造函数 + depositBond)
+    total_init_gas = receipt_deposit['gasUsed']
+    GAS_METRICS["1) Initialize"] = total_init_gas
+    print(f"[!] Phase 1 (Initialize) Complete. Gas Used: {total_init_gas}", flush=True)
+
     print("[!] Deposit 50ETH to target chain (R=50)")
     return bes_instance
 
@@ -202,8 +237,9 @@ def main():
                 ).transact({'from': w3_dst.eth.accounts[0]})
 
                 print("[*] Waiting for Anvil to process EarlyExecute...", flush=True)
-                w3_dst.eth.wait_for_transaction_receipt(tx_anvil_hash)
-                
+                receipt_ee = w3_dst.eth.wait_for_transaction_receipt(tx_anvil_hash)
+                GAS_METRICS["2) EarlyExecute"] = receipt_ee['gasUsed']
+                print(f"[!] Phase 2 (EarlyExecute) Complete. Gas Used: {receipt_ee['gasUsed']}", flush=True)
                 print_balance_dashboard("T1: EARLY SETTLEMENT (PRE-REORG)", w3_src, w3_dst, bes_contract)
                 break
             else:
@@ -230,7 +266,9 @@ def main():
             print(f"[*] Final hash: {final_block_hash}")
 
             tx_res = bes_contract.functions.resolve(tx_hash, final_block_hash).transact({'from': w3_dst.eth.accounts[0]})
-            w3_dst.eth.wait_for_transaction_receipt(tx_res)
+            receipt_res = w3_dst.eth.wait_for_transaction_receipt(tx_res)
+            GAS_METRICS["3) Resolve"] = receipt_res['gasUsed']
+            print(f"[!] Phase 3 (Resolve) Complete. Gas Used: {receipt_res['gasUsed']}", flush=True)
 
             if final_block_hash != recorded_hash:
                 print("!!! EXPERIMENT RESULT: REORG DETECTED & COMPENSATED !!!")
@@ -238,6 +276,17 @@ def main():
                 print(f"The BES Contract successfully paid out 10 ETH to the receiver from the bond.")
             else:
                 print("[Result] No reorganization occurred, normal settlement.")
+
+            print(f"[*] Triggering Withdraw...", flush=True)
+            time.sleep(10)
+            try:
+                tx_wd = bes_contract.functions.withdraw().transact({'from': w3_dst.eth.accounts[0]})
+                receipt_wd = w3_dst.eth.wait_for_transaction_receipt(tx_wd)
+                GAS_METRICS["4) Withdraw"] = receipt_wd['gasUsed']
+                print(f"[!] Phase 4 (Withdraw) Complete. Gas Used: {receipt_wd['gasUsed']}", flush=True)
+            except Exception as w_err:
+                print(f"[!] Withdraw skipped or failed (e.g. if reserved E > 0): {w_err}")
+
             print_balance_dashboard("T2: POST-REORG FINAL STATE", w3_src, w3_dst, bes_contract)
             break
         
